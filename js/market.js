@@ -35,7 +35,7 @@
   const WS_KEYS = WS; // workshop types the user allows to be built (opts.windmill / forge / sawmill)
   // resource actions the user can do (opts.fruit = Harvest Fruit needs Organization, opts.hunt = Hunt needs Hunting;
   // both 2 ★ and +1 population – the population is not valued by the plan, only the cost and the step)
-  const RES_KEYS = ['fruit', 'hunt'];
+  const RES_KEYS = ['fruit', 'hunt', 'fish']; // opts.fish = Catch Fish needs Fishing (only counts for the population)
   // ★ per action. destroy: free in the game (assumed 0 ★, still one action)
   const DEF_COST = { market: 5, windmill: 5, forge: 5, sawmill: 5, farm: 5, mine: 5, lumber: 3, clear: -1, burn: 5, plant: 5, fruit: 2, hunt: 2, destroy: 0 };
   const RANGE = 2; // city territory radius (Chebyshev)
@@ -75,6 +75,7 @@
       ore: t === 'mountain' && (res.indexOf('ore') >= 0 || bld === 'mine'),
       fruit: t === 'field' && res.indexOf('fruit') >= 0 && res.indexOf('crop') < 0 && bld !== 'farm',
       animal: t === 'forest' && res.indexOf('animal') >= 0 && bld !== 'lumber',
+      fish: t === 'water' && res.indexOf('fish') >= 0,
     };
     if (t === 'city' && x.name) o.name = String(x.name);
     if (t !== 'city' && x.own != null) o.own = String(x.own);
@@ -731,12 +732,12 @@
         if (ci != null) { out.push({ c: x.c, r: x.r, terrain: 'city', name: o.name }); return; }
         if (inWin(i)) {
           const k = P.owner[i], cc = P.cities[k];
-          out.push({ c: x.c, r: x.r, terrain: o.t, res: (o.crop ? ['crop'] : []).concat(o.ore ? ['ore'] : [], o.fruit ? ['fruit'] : [], o.animal ? ['animal'] : []), bld: o.bld, own: key(cc.c, cc.r) });
+          out.push({ c: x.c, r: x.r, terrain: o.t, res: (o.crop ? ['crop'] : []).concat(o.ore ? ['ore'] : [], o.fruit ? ['fruit'] : [], o.animal ? ['animal'] : [], o.fish ? ['fish'] : []), bld: o.bld, own: key(cc.c, cc.r) });
           return;
         }
         if (o.t === 'city') { out.push({ c: x.c, r: x.r, terrain: 'water', own: '-' }); return; } // another city: blocked
         const b = orig ? o.bld : fin.has(key(x.c, x.r)) ? fin.get(key(x.c, x.r)) : null;
-        out.push({ c: x.c, r: x.r, terrain: b && BASE[b] ? BASE[b] : o.t, res: (o.crop ? ['crop'] : []).concat(o.ore ? ['ore'] : [], o.fruit ? ['fruit'] : [], o.animal ? ['animal'] : []), bld: b, own: '-' });
+        out.push({ c: x.c, r: x.r, terrain: b && BASE[b] ? BASE[b] : o.t, res: (o.crop ? ['crop'] : []).concat(o.ore ? ['ore'] : [], o.fruit ? ['fruit'] : [], o.animal ? ['animal'] : [], o.fish ? ['fish'] : []), bld: b, own: '-' });
       });
       return out;
     }
@@ -888,12 +889,12 @@
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const esc = s => (PP.ui && PP.ui.esc ? PP.ui.esc(s) : String(s).replace(/[&<>"']/g, ch => '&#' + ch.charCodeAt(0) + ';'));
   const toast = m => PP.ui && PP.ui.toast && PP.ui.toast(m);
-  const NAME = { field: 'Empty', forest: 'Forest', mountain: 'Mountain', water: 'Water', city: 'City', crop: 'Crop (for Farm)', ore: 'Metal', fruit: 'Fruit', animal: 'Animal',
+  const NAME = { field: 'Empty', forest: 'Forest', mountain: 'Mountain', water: 'Water', city: 'City', crop: 'Crop (for Farm)', ore: 'Metal', fruit: 'Fruit', animal: 'Animal', fish: 'Fish',
     lumber: 'Lumber Hut', plant: 'Grow Forest', fruitH: 'Harvest Fruit', hunt: 'Hunt', other: 'Other building' };
   const nm = id => NAME[id] || (ITEM(id) || {}).name || ({ cloud: 'Cloud', space: 'Space', monument: 'Monument' })[id] || id;
   const stepName = s => (s.item === 'destroy' ? 'Destroy ' + nm(s.what || 'building') : s.item === 'fruit' ? 'Harvest Fruit' : s.item === 'hunt' ? 'Hunt Animal' : UNIQUE.indexOf(s.item) >= 0 || PRODS.indexOf(s.item) >= 0 ? 'Build ' + nm(s.item) : nm(s.item));
   const ICON = {
-    field: '🟩', forest: '🌲', mountain: '⛰️', water: '🌊', city: '🏠', crop: '🌾', ore: '💎', fruit: '🍒', animal: '🦌', hunt: '🏹',
+    field: '🟩', forest: '🌲', mountain: '⛰️', water: '🌊', city: '🏠', crop: '🌾', ore: '💎', fruit: '🍒', animal: '🦌', hunt: '🏹', fish: '🐟',
     farm: '🌾', mine: '⛏️', lumber: '🪵', windmill: '🌬️', forge: '🔨', sawmill: '🪚', market: '🏪',
     destroy: '💥', clear: '🪓', burn: '🔥', plant: '🌱', other: '🏛️', space: '🌌', cloud: '☁️', monument: '🗽',
   };
@@ -911,17 +912,17 @@
   const ACT_COL = '#3ddc84'; // what the ✓ Built button acts on
   const cityCol = k => CITY_COL[(k >= 0 ? k : 0) % CITY_COL.length];
   const TER_B = ['field', 'forest', 'mountain', 'water', 'space', 'cloud', 'city'];
-  const RES_B = ['crop', 'ore', 'fruit', 'animal'];
+  const RES_B = ['crop', 'ore', 'fruit', 'animal', 'fish'];
   const BLD_B = ['farm', 'mine', 'lumber', 'windmill', 'forge', 'sawmill', 'market'];
   const BRUSH = TER_B.concat(RES_B, BLD_B, ['monument']);
-  const PAL_ORDER = ['field', 'sawmill', 'lumber', 'forest', 'animal', 'windmill', 'farm', 'crop', 'fruit', 'forge', 'mine', 'ore', 'mountain', 'city', 'market', 'water', 'space', 'cloud', 'monument'];
-  const BRUSH_LABEL = { field: 'Empty', forest: 'Forest', mountain: 'Mountain', water: 'Water', space: 'Space', cloud: 'Cloud', monument: 'Monument', city: 'City', crop: 'Crop', ore: 'Metal', fruit: 'Fruit', animal: 'Animal',
+  const PAL_ORDER = ['field', 'sawmill', 'lumber', 'forest', 'animal', 'windmill', 'farm', 'crop', 'fruit', 'forge', 'mine', 'ore', 'mountain', 'city', 'market', 'water', 'fish', 'space', 'cloud', 'monument'];
+  const BRUSH_LABEL = { field: 'Empty', forest: 'Forest', mountain: 'Mountain', water: 'Water', space: 'Space', cloud: 'Cloud', monument: 'Monument', city: 'City', crop: 'Crop', ore: 'Metal', fruit: 'Fruit', animal: 'Animal', fish: 'Fish',
     farm: 'Farm', mine: 'Mine', lumber: 'Lumber', windmill: 'Windmill', forge: 'Forge', sawmill: 'Sawmill', market: 'Market' };
-  const RES_TER = { crop: 'field', fruit: 'field', ore: 'mountain', animal: 'forest' };
+  const RES_TER = { crop: 'field', fruit: 'field', ore: 'mountain', animal: 'forest', fish: 'water' };
   const OPT_LABEL = { clear: ['🪓', 'Clear Forest', '+1 ★'], burn: ['🔥', 'Burn Forest', '→ Crop'], grow: ['🌱', 'Grow Forest', 'Empty → Forest'],
     destroy: ['💥', 'Destroy buildings', 'move / replace'], produce: ['🏗️', 'New Farms, Mines, Lumber Huts', ''] };
   const TECH_OF_WS = { windmill: 'Construction', forge: 'Smithery', sawmill: 'Mathematics' }; // fallback when PP.TECH is missing
-  const RES_TECH = { fruit: 'Organization', hunt: 'Hunting' }; // fallback when PP.TECH is missing
+  const RES_TECH = { fruit: 'Organization', hunt: 'Hunting', fish: 'Fishing' }; // fallback when PP.TECH is missing
 
   const ui = { step: 1, brush: 'forest', paint: null, alt: 0, sel: null, entered: false, borders: false, edit: null, onlyForest: false, growMenu: false, techMenu: false };
   const S = () => PP.state;
@@ -1511,9 +1512,9 @@
   function growSkip() { const m = M(); if (!Array.isArray(m.growSkip)) m.growSkip = []; return new Set(m.growSkip); }
   // Border Growth is the level-4 reward: a city must first gain 2 + 3 + 4 = 9 population (level 1 → 4), and it has to
   // come from its 3×3 territory (the ring is only there after growing). Population a city can still get there:
-  // Harvest Fruit / Hunt +1, Farm +2, Mine +2, Lumber Hut +1, Windmill +1 per Farm, Forge +2 per Mine, Sawmill +1 per
-  // Lumber Hut next to it – with your techs and allowed actions. Upper bound (a tile is counted for its best use; fish,
-  // ports, temples and roads are not counted). The city's level / population from the city editor count as reached,
+  // Harvest Fruit / Hunt / Catch Fish +1, Farm +2, Mine +2, Lumber Hut +1, Windmill +1 per Farm, Forge +2 per Mine, Sawmill +1 per
+  // Lumber Hut next to it – with your techs and allowed actions. Upper bound (a tile is counted for its best use; ports,
+  // temples and roads are not counted). The city's level / population from the city editor count as reached,
   // and so do the buildings already in its territory, whichever is more. Level 4+ with 3×3: the choice is gone.
   const POP_NEED = 9, PROD_POP = { farm: 2, mine: 2, lumber: 1 }, WS_POP = { windmill: 1, forge: 2, sawmill: 1 };
   function popReach(A, ci) {
@@ -1535,7 +1536,7 @@
         continue;
       }
       let best = 0; for (const P of PRODS) if (canBe(x, P)) best = Math.max(best, PROD_POP[P]);
-      const v = (x.fruit && o.fruit ? 1 : 0) + (x.animal && o.hunt ? 1 : 0) + best;
+      const v = (x.fruit && o.fruit ? 1 : 0) + (x.animal && o.hunt ? 1 : 0) + (x.fish && o.fish ? 1 : 0) + best;
       tileMax.set(x, v); pot += v;
     }
     for (const T of WS) {
@@ -1564,7 +1565,7 @@
     const pick = small.filter(ci => !skip.has(key(ci.c, ci.r)) && reach.get(ci.k).ok), n = pick.length, solves = growSolves(n);
     const blockedHtml = blocked.length ? '<div class="gw-warn" style="color:var(--muted,#9aa5c8);background:rgba(255,255,255,.04)">🚫 Can\'t take Border Growth (needs level 4 = 9 population first):' +
       blocked.map(ci => `<br><b style="color:${cityCol(ci.k)}">${esc(cityName(ci, ci.k))}</b>: ${esc(popWhy(reach.get(ci.k)))}`).join('') +
-      '<br><small>Level / population are set in the city editor; fish, ports, temples and roads are not counted.</small></div>' : '';
+      '<br><small>Level / population are set in the city editor; ports, temples and roads are not counted.</small></div>' : '';
     const openRing = pick.reduce((a, ci) => a + ((rs[ci.k] || {}).open || 0), 0);
     const ringWarn = openRing ? `<div class="gw-warn">⚠ ${plural(openRing, 'tile', 'tiles')} with <b>?</b> in the Border Growth rings (dashed light-green, outside 3×3) – <button class="lnk" data-step="2">check them in ②</button></div>` : '';
     if (!g) {
@@ -2058,7 +2059,7 @@
         storeTile(c, r, { terrain: x.terrain, res: x.res.filter(q => q !== id), bld: (id === 'crop' && x.bld === 'farm') || (id === 'ore' && x.bld === 'mine') ? null : x.bld === 'other' ? x.other : x.bld });
         return;
       }
-      let res = x.terrain === ter ? x.res.filter(q => q !== 'crop' && q !== 'fruit' && q !== 'ore' && q !== 'animal') : [];
+      let res = x.terrain === ter ? x.res.filter(q => q !== 'crop' && q !== 'fruit' && q !== 'ore' && q !== 'animal' && q !== 'fish') : [];
       res = res.concat(id);
       // Market / workshops need a tile without resource; Farm needs Crop, Mine needs Metal
       let bld = x.terrain === ter ? x.bld : null;
@@ -2389,8 +2390,8 @@
       }).join('') + '</div>';
       if (!WS_KEYS.some(k => m.opts[k])) h += '<p class="mk-note" style="margin-top:2px">No new workshops</p>';
       h += '<h3>Resources you can use</h3><div class="mk-opts">' + RES_KEYS.map(k => {
-        const it = ITEM(k) || {}, tech = it.tech && PP.TECH && PP.TECH[it.tech] ? PP.TECH[it.tech].name : RES_TECH[k], lab = k === 'fruit' ? 'Harvest Fruit' : 'Hunt Animal';
-        const why = k === 'fruit' ? 'without it, Empty tiles with Fruit stay blocked' : 'without it, an Animal is lost when its forest is used (no Hunt first)';
+        const it = ITEM(k) || {}, tech = it.tech && PP.TECH && PP.TECH[it.tech] ? PP.TECH[it.tech].name : RES_TECH[k], lab = k === 'fruit' ? 'Harvest Fruit' : k === 'fish' ? 'Catch Fish' : 'Hunt Animal';
+        const why = k === 'fruit' ? 'without it, Empty tiles with Fruit stay blocked' : k === 'fish' ? 'Fish only count for the population a city can reach (Border Growth)' : 'without it, an Animal is lost when its forest is used (no Hunt first)';
         return `<button class="mk-opt ${m.opts[k] ? 'on' : ''}" data-opt="${k}" title="Uncheck if you don't have ${esc(tech)} – ${esc(why)}"><span class="bx">${m.opts[k] ? '✓' : ''}</span><span>${iconHtml(k === 'hunt' ? 'animal' : k, 16)} ${lab}<small>${esc(tech)}</small></span></button>`;
       }).join('') + '</div>';
       if (p) h += growthHtml(res);
@@ -2448,7 +2449,7 @@
       if (x.bld && x.bld !== 'other') n[x.bld] = (n[x.bld] || 0) + 1;
       if (!x.stored) un++;
     }
-    const order = ['city', 'field', 'forest', 'mountain', 'water', 'crop', 'ore', 'fruit', 'animal'].concat(BLD_B);
+    const order = ['city', 'field', 'forest', 'mountain', 'water', 'crop', 'ore', 'fruit', 'animal', 'fish'].concat(BLD_B);
     return '<div class="mk-cnt">' + order.filter(k => n[k]).map(k => `<span title="${esc(nm(k))}">${iconHtml(k, 15)} ${n[k]}</span>`).join('') + (un ? `<span title="Not marked – counted as Empty">❔ ${un} unmarked</span>` : '') + '</div>';
   }
   // v32: the plan numbers its cities in board order, the map (colours, "City A/B/…") in the order they were selected →
