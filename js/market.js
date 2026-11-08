@@ -1246,7 +1246,7 @@
   const growSolves = n => (n <= GROW_ALL_MAX ? 2 ** n : 3 * n + 4);
   function startGrowth(res) {
     if (!res || !res.best) return;
-    const skip = growSkip(), A = area(), cand = A.cities.filter(ci => ci.rad === 1 && !skip.has(key(ci.c, ci.r))).map(ci => ({ key: key(ci.c, ci.r), name: cityName(ci, ci.k), k: ci.k, c: ci.c, r: ci.r }));
+    const skip = growSkip(), A = area(), cand = A.cities.filter(ci => ci.rad === 1 && !skip.has(key(ci.c, ci.r)) && popReach(A, ci).ok).map(ci => ({ key: key(ci.c, ci.r), name: cityName(ci, ci.k), k: ci.k, c: ci.c, r: ci.r }));
     if (!cand.length) return;
     stopGrowth(); if (tech && tech.state !== 'done') stopTech(); // only one check at a time; finished results stay
     const n = cand.length, exhaustive = n <= GROW_ALL_MAX;
@@ -1509,6 +1509,48 @@
   };
   function growPrio() { const id = M().growPrio; const P = GROW_PRIO[id] || GROW_PRIO.bal; return Object.assign({ pg: 7.5 + P.giant }, P); }
   function growSkip() { const m = M(); if (!Array.isArray(m.growSkip)) m.growSkip = []; return new Set(m.growSkip); }
+  // Border Growth is the level-4 reward: a city must first gain 2 + 3 + 4 = 9 population (level 1 → 4), and it has to
+  // come from its 3×3 territory (the ring is only there after growing). Population a city can still get there:
+  // Harvest Fruit / Hunt +1, Farm +2, Mine +2, Lumber Hut +1, Windmill +1 per Farm, Forge +2 per Mine, Sawmill +1 per
+  // Lumber Hut next to it – with your techs and allowed actions. Upper bound (a tile is counted for its best use; fish,
+  // ports, temples and roads are not counted). The city's level / population from the city editor count as reached,
+  // and so do the buildings already in its territory, whichever is more. Level 4+ with 3×3: the choice is gone.
+  const POP_NEED = 9, PROD_POP = { farm: 2, mine: 2, lumber: 1 }, WS_POP = { windmill: 1, forge: 2, sawmill: 1 };
+  function popReach(A, ci) {
+    const ce = cityEntry(ci.c, ci.r) || {}, L = Math.max(1, Math.min(8, +ce.level || 1)), p = Math.max(0, +ce.pop || 0);
+    if (L >= 4) return { ok: false, why: 'level', level: L };
+    let soFar = p; for (let k = 1; k < L; k++) soFar += k + 1;
+    const o = normOpts(M().opts), mine = (c, r) => A.ownerOf(c, r) === ci.k && !(c === ci.c && r === ci.r);
+    const X = new Map(); // normalized cells, any tile asked for
+    const at = (c, r) => { const k = key(c, r); if (!X.has(k)) { const x = cellAt(c, r); X.set(k, normCell(x.terrain === 'city' ? { c, r, terrain: 'city' } : x)); } return X.get(k); };
+    const canBe = (x, P) => !x.bld && x.t !== 'city' && o.produce && !!prodPath(x, P, o);
+    const tiles = []; for (const k of A.owner.keys()) { const [c, r] = k.split(',').map(Number); if (mine(c, r)) tiles.push(at(c, r)); }
+    const nbs = x => NB.map(([dc, dr]) => at(x.c + dc, x.r + dr));
+    let have = 0, pot = 0;
+    const tileMax = new Map();
+    for (const x of tiles) {
+      if (x.bld) {
+        if (PROD_POP[x.bld]) have += PROD_POP[x.bld];
+        if (WS_POP[x.bld]) have += WS_POP[x.bld] * nbs(x).filter(y => y.bld === PROD[x.bld]).length;
+        continue;
+      }
+      let best = 0; for (const P of PRODS) if (canBe(x, P)) best = Math.max(best, PROD_POP[P]);
+      const v = (x.fruit && o.fruit ? 1 : 0) + (x.animal && o.hunt ? 1 : 0) + best;
+      tileMax.set(x, v); pot += v;
+    }
+    for (const T of WS) {
+      const P = PROD[T], own = tiles.find(x => x.bld === T);
+      const extra = w => nbs(w).filter(y => mine(y.c, y.r) && canBe(y, P)).length;
+      let b = 0;
+      if (own) b = WS_POP[T] * extra(own);
+      else if (o[T]) for (const w of tiles) if (!w.bld && fieldPath(w, o)) b = Math.max(b, WS_POP[T] * (extra(w) + nbs(w).filter(y => y.bld === P).length) - tileMax.get(w));
+      pot += b;
+    }
+    const reached = Math.max(soFar, have), max = reached + pot;
+    return { ok: max >= POP_NEED, why: max >= POP_NEED ? null : 'pop', level: L, reached, max };
+  }
+  const popWhy = r => (r.why === 'level' ? `level ${r.level} already – Border Growth was the level-4 choice`
+    : `only ${r.max} of ${POP_NEED} population reachable in its 3×3 – can't reach level 4`);
   function growthHtml(res) {
     if (!res || res.pending || res.tooBig || res.altPending || !res.best) return '';
     const A = area(), small = A.cities.filter(ci => ci.rad === 1), grown = A.cities.filter(ci => ci.rad === 2);
@@ -1518,7 +1560,11 @@
     if (growthAuto && !growthNow()) { growthAuto = false; setTimeout(() => { startGrowth(planResult()); PP.app.refresh(); }, 0); }
     if (!small.length) return box(allBtn.replace('margin:8px 0 0', 'margin:0'));
     const g = growthNow(), rs = ringStats(), skip = growSkip();
-    const pick = small.filter(ci => !skip.has(key(ci.c, ci.r))), n = pick.length, solves = growSolves(n);
+    const reach = new Map(small.map(ci => [ci.k, popReach(A, ci)])), blocked = small.filter(ci => !reach.get(ci.k).ok);
+    const pick = small.filter(ci => !skip.has(key(ci.c, ci.r)) && reach.get(ci.k).ok), n = pick.length, solves = growSolves(n);
+    const blockedHtml = blocked.length ? '<div class="gw-warn" style="color:var(--muted,#9aa5c8);background:rgba(255,255,255,.04)">🚫 Can\'t take Border Growth (needs level 4 = 9 population first):' +
+      blocked.map(ci => `<br><b style="color:${cityCol(ci.k)}">${esc(cityName(ci, ci.k))}</b>: ${esc(popWhy(reach.get(ci.k)))}`).join('') +
+      '<br><small>Level / population are set in the city editor; fish, ports, temples and roads are not counted.</small></div>' : '';
     const openRing = pick.reduce((a, ci) => a + ((rs[ci.k] || {}).open || 0), 0);
     const ringWarn = openRing ? `<div class="gw-warn">⚠ ${plural(openRing, 'tile', 'tiles')} with <b>?</b> in the Border Growth rings (dashed light-green, outside 3×3) – <button class="lnk" data-step="2">check them in ②</button></div>` : '';
     if (!g) {
@@ -1530,13 +1576,13 @@
       h += '<div class="gw-prio">' +
         Object.values(GROW_PRIO).map(P => `<button class="${PRn.id === P.id ? 'on' : ''}" data-gprio="${P.id}"><b>${P.name}</b><small>${esc(P.note)}</small></button>`).join('') + '</div>';
       h += '<div class="mk-note" style="margin:8px 0 4px">Which cities may grow?</div><div class="gw-pick">';
-      h += small.map(ci => { const k = key(ci.c, ci.r), on = !skip.has(k);
+      h += small.filter(ci => reach.get(ci.k).ok).map(ci => { const k = key(ci.c, ci.r), on = !skip.has(k);
         return `<button class="${on ? 'on' : ''}" data-gskip="${k}" style="--cc:${cityCol(ci.k)}" aria-pressed="${on}"><span class="bx">${on ? '✓' : ''}</span>${esc(cityName(ci, ci.k))}</button>`; }).join('');
       h += '</div>';
       if (grown.length) h += `<div class="mk-note" style="margin:4px 0">Already 5×5: ${grown.map(ci => esc(cityName(ci, ci.k))).join(', ')} <button class="lnk" data-a="growthAll">set all to 3×3 and check</button></div>`;
-      h += ringWarn;
+      h += blockedHtml + ringWarn;
       h += n ? `<button class="mk-btn pri" data-a="growth">▶ Start <small style="opacity:.8">(${n <= GROW_ALL_MAX ? '' : 'about '}${plural(solves, 'plan', 'plans')} · about ${est < 90 ? est + ' s' : Math.round(est / 60) + ' min'})</small></button>`
-        : '<button class="mk-btn" disabled>Pick at least one city</button>';
+        : `<button class="mk-btn" disabled>${blocked.length === small.length ? 'No city can reach level 4' : 'Pick at least one city'}</button>`;
       return h + '</div>';
     }
     if (g.state === 'running') {
@@ -1574,7 +1620,8 @@
     h += take.concat(noTake).map(card).join('');
     h += ringWarn;
     if (g.open) h += `<p class="mk-note" style="margin:8px 0 0;color:#ffb703">⚠ ${plural(g.open, 'plan', 'plans')} not proven</p>`;
-    const left = small.filter(ci => skip.has(key(ci.c, ci.r)));
+    h += blockedHtml;
+    const left = small.filter(ci => skip.has(key(ci.c, ci.r)) && reach.get(ci.k).ok);
     if (left.length) h += `<div class="mk-note" style="margin:4px 0 0">Not checked (your choice): ${left.map(ci => esc(cityName(ci, ci.k))).join(', ')}</div>`;
     h += '<button class="mk-btn sm" data-a="growthAgain" style="margin-top:8px">↻ Choose cities and check again</button>';
     return box(h);
@@ -3000,6 +3047,7 @@
   PP.market.cellAt = cellAt;
   PP.market.territoryOfArea = () => terr();
   PP.market.area = grow => area(grow);
+  PP.market.popReach = (c, r) => { const A = area(), ci = A.cities.find(q => q.c === c && q.r === r); return ci ? popReach(A, ci) : null; };
   PP.market.tapCity = (c, r) => { tapCity(c, r); PP.app.commit(); };
   PP.market.selectCity = (c, r, rad) => { const x = selectCity(c, r, rad); PP.app.commit(); return x; };
   PP.market.unselectCity = (c, r) => { unselectCity(c, r); PP.app.commit(); };
