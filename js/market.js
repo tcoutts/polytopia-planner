@@ -1565,10 +1565,10 @@
     }
     pot += bonus;
     const reached = Math.max(soFar, have), max = reached + pot;
-    return { ok: max >= POP_NEED, why: max >= POP_NEED ? null : 'pop', level: L, reached, max };
+    return { ok: max >= POP_NEED, why: max >= POP_NEED ? null : 'pop', level: L, pop: p, reached, need: Math.max(0, POP_NEED - reached), can: pot, max };
   }
   const popWhy = r => (r.why === 'level' ? `level ${r.level} already – Border Growth was the level-4 choice`
-    : `only ${r.max} of ${POP_NEED} population reachable in its 3×3 – can't reach level 4`);
+    : `needs ${r.need} more population for level 4 – its 3×3 can give only ${r.can}`);
   function growthHtml(res) {
     if (!res || res.pending || res.tooBig || res.altPending || !res.best) return '';
     const A = area(), small = A.cities.filter(ci => ci.rad === 1), grown = A.cities.filter(ci => ci.rad === 2);
@@ -1582,7 +1582,7 @@
     const pick = small.filter(ci => !skip.has(key(ci.c, ci.r)) && reach.get(ci.k).ok), n = pick.length, solves = growSolves(n);
     const blockedHtml = blocked.length ? '<div class="gw-warn" style="color:var(--muted,#9aa5c8);background:rgba(255,255,255,.04)">🚫 Can\'t take Border Growth (needs level 4 = 9 population first):' +
       blocked.map(ci => `<br><b style="color:${cityCol(ci.k)}">${esc(cityName(ci, ci.k))}</b>: ${esc(popWhy(reach.get(ci.k)))}`).join('') +
-      '<br><small>Level / population are set in the city editor; ports, temples and roads are not counted.</small></div>' : '';
+      '<br><small>Set each city\'s level and population (the bar under its name) in ① Cities; ports, temples and roads are not counted.</small></div>' : '';
     const openRing = pick.reduce((a, ci) => a + ((rs[ci.k] || {}).open || 0), 0);
     const ringWarn = openRing ? `<div class="gw-warn">⚠ ${plural(openRing, 'tile', 'tiles')} with <b>?</b> in the Border Growth rings (dashed light-green, outside 3×3) – <button class="lnk" data-step="2">check them in ②</button></div>` : '';
     if (!g) {
@@ -2351,13 +2351,20 @@
 .mk .mk-cnt span{background:var(--bg,#12172b);border-radius:8px;padding:3px 7px;font-size:12px;display:inline-flex;align-items:center;gap:3px}
 .mk .mk-cities{margin:6px 0}
 .mk .mk-chips{display:flex;flex-direction:column;gap:5px;margin:4px 0 2px}
-.mk .mk-chip{display:flex;align-items:center;gap:7px;border:1px solid var(--line,#33406e);border-left:4px solid var(--cc,#4cc9f0);background:var(--panel2,#252e52);border-radius:10px;padding:3px 4px 3px 8px;min-height:44px}
+.mk .mk-chip{display:flex;flex-wrap:wrap;align-items:center;gap:7px;border:1px solid var(--line,#33406e);border-left:4px solid var(--cc,#4cc9f0);background:var(--panel2,#252e52);border-radius:10px;padding:3px 4px 3px 8px;min-height:44px}
 .mk .mk-chip .dot{width:12px;height:12px;border-radius:50%;background:var(--cc,#4cc9f0);flex:none}
 .mk .mk-chip .nmx{flex:1;min-width:0;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.15}
 .mk .mk-chip .nmx small{display:block;font-weight:400;color:var(--muted,#9aa5c8);font-size:11.5px}
 .mk .mk-chip .seg{display:flex;background:var(--bg,#12172b);border-radius:9px;padding:2px;flex:none}
 .mk .mk-chip .seg button{border:0;background:none;color:var(--muted,#9aa5c8);font-weight:700;font-size:13px;min-height:36px;min-width:44px;border-radius:7px;touch-action:manipulation}
 .mk .mk-chip .seg button.on{background:var(--cc,#4cc9f0);color:#08121f}
+.mk .mk-chip .lvrow{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;padding:0 0 4px 19px;font-size:12px;color:var(--muted,#9aa5c8)}
+.mk .mk-chip .lv{display:inline-flex;align-items:center;gap:3px}
+.mk .mk-chip .lv button{width:32px;height:32px;border:1px solid var(--line,#33406e);border-radius:8px;background:var(--bg,#12172b);color:var(--text,#e8ecf8);font-weight:800;font-size:15px;padding:0;touch-action:manipulation}
+.mk .mk-chip .lv b{min-width:30px;text-align:center;color:var(--text,#e8ecf8);font-size:13px}
+.mk .mk-chip .lvst{flex-basis:100%}
+.mk .mk-chip .lvst.ok{color:var(--ok,#06d6a0)}
+.mk .mk-chip .lvst.no{color:#ffb703}
 .mk .mk-chip .x{border:0;background:none;color:var(--muted,#9aa5c8);font-size:16px;min-width:40px;min-height:40px;flex:none;touch-action:manipulation}
 .mk .mk-row{display:flex;flex-wrap:wrap}
 .mk .mk-cities label{display:flex;align-items:center;gap:7px;margin:4px 0;font-size:12.5px;color:var(--muted,#9aa5c8)}
@@ -2466,8 +2473,22 @@
       const gtxt = gi ? (gi.take ? ` · <b style="color:#7bd389">🌱 Grow: +${gi.gain} ★</b>` : ' · 👥 Pop. Growth') : '';
       return `<div class="mk-chip" style="--cc:${cityCol(k)}"><span class="dot"></span><span class="nmx">${esc(cityName(ci, k))}<small>${ci.c}/${ci.r} · ${n} tiles${gtxt}</small></span>` +
         `<span class="seg"><button data-rad="${at},1" class="${ci.rad === 1 ? 'on' : ''}">3×3</button><button data-rad="${at},2" class="${ci.rad === 2 ? 'on' : ''}">5×5</button></span>` +
-        `<button class="x" data-unsel="${at}" title="Remove" aria-label="Remove ${esc(cityName(ci, k))}">✕</button></div>`;
+        `<button class="x" data-unsel="${at}" title="Remove" aria-label="Remove ${esc(cityName(ci, k))}">✕</button>` + lvRow(A, ci) + '</div>';
     }).join('') + '</div>';
+  }
+  // city level + population as the game shows them (level, and the filled part of the bar under the name) – Border
+  // Growth is the level-4 reward, so this says how much population the city still needs and whether its 3×3 has it
+  function lvRow(A, ci) {
+    const at = ci.c + ',' + ci.r, ce = cityEntry(ci.c, ci.r) || {}, L = Math.max(1, +ce.level || 1), p = Math.max(0, +ce.pop || 0);
+    let st = '';
+    if (ci.rad === 1) {
+      const r = popReach(A, ci);
+      st = r.why === 'level' ? '<span class="lvst no">Level 4+ with 3×3: Border Growth was the level-4 choice</span>'
+        : r.need === 0 ? '<span class="lvst ok">✓ Level 4 reached – Border Growth possible</span>'
+        : `<span class="lvst ${r.ok ? 'ok' : 'no'}">${r.ok ? '✓' : '🚫'} Border Growth: needs ${r.need} more 👥 · its 3×3 can give ${r.can}</span>`;
+    }
+    return `<div class="lvrow"><span class="lv">Level<button data-clv="${at}:-1" aria-label="Level down">−</button><b>${L}</b><button data-clv="${at}:1" aria-label="Level up">+</button></span>` +
+      `<span class="lv">👥<button data-cpop="${at}:-1" aria-label="Population down">−</button><b>${p}/${L + 1}</b><button data-cpop="${at}:1" aria-label="Population up">+</button></span>${st}</div>`;
   }
   function citiesHtml() {
     const T = area();
@@ -2643,6 +2664,16 @@
       M().growPrio = d.gprio;
       if (growth && growth.state === 'done' && growth.rechoose && growth.sig === cacheSig) growth.rechoose(growPrio()); // instant
       PP.app.commit(); return;
+    }
+    if (d.clv || d.cpop) {
+      const [k, dv] = (d.clv || d.cpop).split(':'), [c, r] = k.split(',').map(Number), ce = cityEntry(c, r) || upsertCity(c, r, 'user');
+      if (ce) {
+        if (d.clv) ce.level = Math.max(1, Math.min(8, (+ce.level || 1) + +dv));
+        else ce.pop = Math.max(0, Math.min(+ce.level || 1, (+ce.pop || 0) + +dv));
+        ce.pop = Math.max(0, Math.min(+ce.level || 1, +ce.pop || 0));
+        PP.app.commit();
+      }
+      return;
     }
     if (d.gskip) { const sk = growSkip(); if (sk.has(d.gskip)) sk.delete(d.gskip); else sk.add(d.gskip); M().growSkip = [...sk]; PP.app.commit(); return; }
     if (d.done) { if (m.done[d.done]) delete m.done[d.done]; else m.done[d.done] = ++doneSeq; PP.app.commit(); return; }
