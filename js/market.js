@@ -1030,6 +1030,7 @@
   function area(grow) {
     const m = M(), sel = selCities();
     const grows = k => (grow instanceof Set ? grow.has(k) : grow === k);
+    if (grow != null && (!(grow instanceof Set) || grow.size) && sel.some(s => s.rad === 1 && grows(key(s.c, s.r)))) return grownArea(grows);
     const cities = sel.map((s, k) => { const ce = cityEntry(s.c, s.r); return { c: s.c, r: s.r, rad: grows(key(s.c, s.r)) ? 2 : s.rad, name: (ce && ce.name) || '', k, implicit: false }; });
     const owner = new Map(), base = new Set(), cand = new Map();
     const cityK = new Map(cities.map(ci => [key(ci.c, ci.r), ci.k]));
@@ -1055,6 +1056,35 @@
         if (!isFinite(c) || !isFinite(r) || isCityAt(c, r) || cellAt(c, r).terrain === 'space') continue;
         owner.set(k, nearestOf(c, r, cities).k);
       }
+    }
+    const ownerOf = (c, r) => { const v = owner.get(key(c, r)); return v === undefined ? -1 : v; };
+    return { cities, owner, base, ownerOf, has: (c, r) => owner.has(key(c, r)), implicit: false, n: owner.size };
+  }
+  // Border Growth only claims tiles nobody owns yet: today's territory (with your border edits) stays exactly as it
+  // is, the grown city gets the free tiles of its 5×5 ring. Not free: tiles of another planned city, tiles you took
+  // out with Edit borders, Space, and the 3×3 around any city that isn't planned (enemy or own city left out).
+  // Two growing cities that both reach a free tile: the nearer one gets it.
+  function grownArea(grows) {
+    const m = M(), cur = area();
+    const cities = cur.cities.map(ci => Object.assign({}, ci, { rad: ci.rad === 1 && grows(key(ci.c, ci.r)) ? 2 : ci.rad }));
+    const owner = new Map(cur.owner), base = new Set(cur.base), cand = new Map();
+    const cityK = new Set(cities.map(ci => key(ci.c, ci.r)));
+    const foreignNear = (c, r) => NB.some(([dc, dr]) => !cityK.has(key(c + dc, r + dr)) && isCityAt(c + dc, r + dr));
+    for (const ci of cities) {
+      if (ci.rad !== 2 || cur.cities[ci.k].rad === 2) continue;
+      for (let dr = -2; dr <= 2; dr++) for (let dc = -2; dc <= 2; dc++) {
+        const c = ci.c + dc, r = ci.r + dr, k = key(c, r);
+        if (cur.owner.has(k) || cur.base.has(k)) continue; // owned today, or taken out of a territory with Edit borders
+        if (!cand.has(k)) cand.set(k, { c, r, by: [] });
+        cand.get(k).by.push(ci);
+      }
+    }
+    for (const [k, t] of cand) {
+      if (isCityAt(t.c, t.r) || foreignNear(t.c, t.r)) continue; // a city, or the territory of a city you don't plan
+      base.add(k);
+      if (m.edits[k] === 0) continue;
+      if (cellAt(t.c, t.r).terrain === 'space') continue; // outside the map
+      owner.set(k, nearestOf(t.c, t.r, t.by).k);
     }
     const ownerOf = (c, r) => { const v = owner.get(key(c, r)); return v === undefined ? -1 : v; };
     return { cities, owner, base, ownerOf, has: (c, r) => owner.has(key(c, r)), implicit: false, n: owner.size };
@@ -2949,7 +2979,7 @@
   PP.market.plan = () => planResult();
   PP.market.cellAt = cellAt;
   PP.market.territoryOfArea = () => terr();
-  PP.market.area = () => area();
+  PP.market.area = grow => area(grow);
   PP.market.tapCity = (c, r) => { tapCity(c, r); PP.app.commit(); };
   PP.market.selectCity = (c, r, rad) => { const x = selectCity(c, r, rad); PP.app.commit(); return x; };
   PP.market.unselectCity = (c, r) => { unselectCity(c, r); PP.app.commit(); };
