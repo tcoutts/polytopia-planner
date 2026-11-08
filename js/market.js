@@ -1530,26 +1530,40 @@
     const canBe = (x, P) => !x.bld && x.t !== 'city' && o.produce && !!prodPath(x, P, o);
     const tiles = []; for (const k of A.owner.keys()) { const [c, r] = k.split(',').map(Number); if (mine(c, r)) tiles.push(at(c, r)); }
     const nbs = x => NB.map(([dc, dr]) => at(x.c + dc, x.r + dr));
-    let have = 0, pot = 0;
-    const tileMax = new Map();
+    // already there: producers and workshops in the territory (a workshop counts the producers next to it, any owner)
+    let have = 0, bonus = 0;
     for (const x of tiles) {
-      if (x.bld) {
-        if (PROD_POP[x.bld]) have += PROD_POP[x.bld];
-        if (WS_POP[x.bld]) have += WS_POP[x.bld] * nbs(x).filter(y => y.bld === PROD[x.bld]).length;
-        continue;
+      if (PROD_POP[x.bld]) have += PROD_POP[x.bld];
+      if (WS_POP[x.bld]) have += WS_POP[x.bld] * nbs(x).filter(y => y.bld === PROD[x.bld]).length;
+      // Harvest Fruit / Hunt / Catch Fish: +1 each, whatever the tile is used for afterwards
+      if (!x.bld) bonus += (x.fruit && o.fruit ? 1 : 0) + (x.animal && o.hunt ? 1 : 0) + (x.fish && o.fish ? 1 : 0);
+    }
+    // exact maximum of the rest: every placement of the new workshops (one per type, on a free tile that can hold
+    // one), then each other free tile takes its best use: producer pop + the pop it adds to the workshops next to it
+    const free = tiles.filter(x => !x.bld);
+    const wsAt = {}; for (const T of WS) { const e = tiles.find(x => x.bld === T); if (e) wsAt[T] = [e]; }
+    const opts = WS.map(T => (wsAt[T] ? [wsAt[T][0]] : [null].concat(o[T] ? free.filter(w => fieldPath(w, o)) : [])));
+    const adj = (a, b) => a !== b && Math.max(Math.abs(a.c - b.c), Math.abs(a.r - b.r)) === 1;
+    let pot = 0;
+    for (const w0 of opts[0]) for (const w1 of opts[1]) for (const w2 of opts[2]) {
+      const W = [w0, w1, w2];
+      if (new Set(W.filter(Boolean)).size !== W.filter(Boolean).length) continue; // two workshops on one tile
+      let v = 0;
+      W.forEach((w, j) => { if (w && !w.bld) v += WS_POP[WS[j]] * nbs(w).filter(y => y.bld === PROD[WS[j]]).length; }); // new workshop next to producers already built
+      for (const x of free) {
+        if (W.indexOf(x) >= 0) continue;
+        let best = 0;
+        for (const P of PRODS) {
+          if (!canBe(x, P)) continue;
+          let s = PROD_POP[P];
+          W.forEach((w, j) => { if (w && PROD[WS[j]] === P && adj(w, x)) s += WS_POP[WS[j]]; });
+          best = Math.max(best, s);
+        }
+        v += best;
       }
-      let best = 0; for (const P of PRODS) if (canBe(x, P)) best = Math.max(best, PROD_POP[P]);
-      const v = (x.fruit && o.fruit ? 1 : 0) + (x.animal && o.hunt ? 1 : 0) + (x.fish && o.fish ? 1 : 0) + best;
-      tileMax.set(x, v); pot += v;
+      pot = Math.max(pot, v);
     }
-    for (const T of WS) {
-      const P = PROD[T], own = tiles.find(x => x.bld === T);
-      const extra = w => nbs(w).filter(y => mine(y.c, y.r) && canBe(y, P)).length;
-      let b = 0;
-      if (own) b = WS_POP[T] * extra(own);
-      else if (o[T]) for (const w of tiles) if (!w.bld && fieldPath(w, o)) b = Math.max(b, WS_POP[T] * (extra(w) + nbs(w).filter(y => y.bld === P).length) - tileMax.get(w));
-      pot += b;
-    }
+    pot += bonus;
     const reached = Math.max(soFar, have), max = reached + pot;
     return { ok: max >= POP_NEED, why: max >= POP_NEED ? null : 'pop', level: L, reached, max };
   }
