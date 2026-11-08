@@ -33,11 +33,14 @@
   const TERR = ['field', 'forest', 'mountain', 'water', 'city'];
   const OPT_KEYS = ['clear', 'burn', 'grow', 'destroy', 'produce'];
   const WS_KEYS = WS; // workshop types the user allows to be built (opts.windmill / forge / sawmill)
+  // resource actions the user can do (opts.fruit = Harvest Fruit needs Organization, opts.hunt = Hunt needs Hunting;
+  // both 2 ★ and +1 population – the population is not valued by the plan, only the cost and the step)
+  const RES_KEYS = ['fruit', 'hunt'];
   // ★ per action. destroy: free in the game (assumed 0 ★, still one action)
-  const DEF_COST = { market: 5, windmill: 5, forge: 5, sawmill: 5, farm: 5, mine: 5, lumber: 3, clear: -1, burn: 5, plant: 5, fruit: 2, destroy: 0 };
+  const DEF_COST = { market: 5, windmill: 5, forge: 5, sawmill: 5, farm: 5, mine: 5, lumber: 3, clear: -1, burn: 5, plant: 5, fruit: 2, hunt: 2, destroy: 0 };
   const RANGE = 2; // city territory radius (Chebyshev)
   const BASE = { farm: 'field', mine: 'mountain', lumber: 'forest', windmill: 'field', forge: 'field', sawmill: 'field', market: 'field' };
-  const PHASE = { destroy: 0, fruit: 1, plant: 2, clear: 3, burn: 4, farm: 5, mine: 5, lumber: 5, windmill: 6, forge: 6, sawmill: 6, market: 7 };
+  const PHASE = { destroy: 0, fruit: 1, hunt: 1, plant: 2, clear: 3, burn: 4, farm: 5, mine: 5, lumber: 5, windmill: 6, forge: 6, sawmill: 6, market: 7 };
   const BIG = 10000;     // w = primary·BIG + secondary (cost & actions)
   const HUGE = 1e9;      // V = income·HUGE − w
   const NB = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
@@ -71,6 +74,7 @@
       crop: t === 'field' && (res.indexOf('crop') >= 0 || bld === 'farm'),
       ore: t === 'mountain' && (res.indexOf('ore') >= 0 || bld === 'mine'),
       fruit: t === 'field' && res.indexOf('fruit') >= 0 && res.indexOf('crop') < 0 && bld !== 'farm',
+      animal: t === 'forest' && res.indexOf('animal') >= 0 && bld !== 'lumber',
     };
     if (t === 'city' && x.name) o.name = String(x.name);
     if (t !== 'city' && x.own != null) o.own = String(x.own);
@@ -80,7 +84,7 @@
   const TECH_KEYS = ['market', 'farm', 'mine', 'lumber'];
   function normOpts(opts) {
     const o = {};
-    for (const k of OPT_KEYS.concat(WS_KEYS, TECH_KEYS)) o[k] = !(opts && opts[k] === false);
+    for (const k of OPT_KEYS.concat(WS_KEYS, RES_KEYS, TECH_KEYS)) o[k] = !(opts && opts[k] === false);
     return o;
   }
   function costs(opts) {
@@ -93,20 +97,24 @@
   }
   // terrain path of a tile (building ignored) → list of actions, or null if impossible
   // Market / Windmill / Forge / Sawmill go on a field – also on one with Crop (built right on it); Fruit is harvested first
+  // (Organization; without it the tile stays blocked). An Animal doesn't block a forest: Lumber Hut, Clear and Burn
+  // work on it, but the animal is lost – so with Hunting it is hunted first (2 ★, +1 population), without Hunting the
+  // forest is used as it is.
+  const hunted = (x, o, p) => (!p ? null : x.animal && o.hunt !== false ? ['hunt'].concat(p) : p);
   function fieldPath(x, o) {
-    if (x.t === 'field') return x.fruit ? ['fruit'] : [];
-    if (x.t === 'forest') return o.clear ? ['clear'] : null;
+    if (x.t === 'field') return !x.fruit ? [] : o.fruit === false ? null : ['fruit'];
+    if (x.t === 'forest') return hunted(x, o, o.clear ? ['clear'] : null);
     return null;
   }
   function prodPath(x, X, o) {
     if (o && o[X] === false) return null; // tech not there (Farming / Mining / Forestry)
     if (X === 'farm') {
       if (x.t === 'field') return x.crop ? ['farm'] : o.grow && o.burn ? ['plant', 'burn', 'farm'] : null;
-      if (x.t === 'forest') return o.burn ? ['burn', 'farm'] : null;
+      if (x.t === 'forest') return hunted(x, o, o.burn ? ['burn', 'farm'] : null);
       return null;
     }
     if (X === 'lumber') {
-      if (x.t === 'forest') return ['lumber'];
+      if (x.t === 'forest') return hunted(x, o, ['lumber']);
       if (x.t === 'field') return o.grow ? ['plant', 'lumber'] : null;
       return null;
     }
@@ -723,12 +731,12 @@
         if (ci != null) { out.push({ c: x.c, r: x.r, terrain: 'city', name: o.name }); return; }
         if (inWin(i)) {
           const k = P.owner[i], cc = P.cities[k];
-          out.push({ c: x.c, r: x.r, terrain: o.t, res: (o.crop ? ['crop'] : []).concat(o.ore ? ['ore'] : [], o.fruit ? ['fruit'] : []), bld: o.bld, own: key(cc.c, cc.r) });
+          out.push({ c: x.c, r: x.r, terrain: o.t, res: (o.crop ? ['crop'] : []).concat(o.ore ? ['ore'] : [], o.fruit ? ['fruit'] : [], o.animal ? ['animal'] : []), bld: o.bld, own: key(cc.c, cc.r) });
           return;
         }
         if (o.t === 'city') { out.push({ c: x.c, r: x.r, terrain: 'water', own: '-' }); return; } // another city: blocked
         const b = orig ? o.bld : fin.has(key(x.c, x.r)) ? fin.get(key(x.c, x.r)) : null;
-        out.push({ c: x.c, r: x.r, terrain: b && BASE[b] ? BASE[b] : o.t, res: (o.crop ? ['crop'] : []).concat(o.ore ? ['ore'] : [], o.fruit ? ['fruit'] : []), bld: b, own: '-' });
+        out.push({ c: x.c, r: x.r, terrain: b && BASE[b] ? BASE[b] : o.t, res: (o.crop ? ['crop'] : []).concat(o.ore ? ['ore'] : [], o.fruit ? ['fruit'] : [], o.animal ? ['animal'] : []), bld: b, own: '-' });
       });
       return out;
     }
@@ -867,7 +875,7 @@
   }
   const MAX_COMBOS_EXACT = 20000;
 
-  PP.market = { CAP, PROD, WS, WS_KEYS, UNIQUE, PRODS, BLDS, OPT_KEYS, DEF_COST, RANGE, HUGE, BIG, optimize, createJob, createLargeJob, materialize, solveOnce, prepare, incomeOf, territory, normRegion, inRegion, normCell, costs, fieldPath, prodPath };
+  PP.market = { CAP, PROD, WS, WS_KEYS, RES_KEYS, UNIQUE, PRODS, BLDS, OPT_KEYS, DEF_COST, RANGE, HUGE, BIG, optimize, createJob, createLargeJob, materialize, solveOnce, prepare, incomeOf, territory, normRegion, inRegion, normCell, costs, fieldPath, prodPath };
 
 
   // ======================================================================== UI (browser only)
@@ -880,16 +888,16 @@
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
   const esc = s => (PP.ui && PP.ui.esc ? PP.ui.esc(s) : String(s).replace(/[&<>"']/g, ch => '&#' + ch.charCodeAt(0) + ';'));
   const toast = m => PP.ui && PP.ui.toast && PP.ui.toast(m);
-  const NAME = { field: 'Empty', forest: 'Forest', mountain: 'Mountain', water: 'Water', city: 'City', crop: 'Crop (for Farm)', ore: 'Metal', fruit: 'Fruit',
-    lumber: 'Lumber Hut', plant: 'Grow Forest', fruitH: 'Harvest Fruit', other: 'Other building' };
+  const NAME = { field: 'Empty', forest: 'Forest', mountain: 'Mountain', water: 'Water', city: 'City', crop: 'Crop (for Farm)', ore: 'Metal', fruit: 'Fruit', animal: 'Animal',
+    lumber: 'Lumber Hut', plant: 'Grow Forest', fruitH: 'Harvest Fruit', hunt: 'Hunt', other: 'Other building' };
   const nm = id => NAME[id] || (ITEM(id) || {}).name || ({ cloud: 'Cloud', space: 'Space', monument: 'Monument' })[id] || id;
-  const stepName = s => (s.item === 'destroy' ? 'Destroy ' + nm(s.what || 'building') : s.item === 'fruit' ? 'Harvest Fruit' : UNIQUE.indexOf(s.item) >= 0 || PRODS.indexOf(s.item) >= 0 ? 'Build ' + nm(s.item) : nm(s.item));
+  const stepName = s => (s.item === 'destroy' ? 'Destroy ' + nm(s.what || 'building') : s.item === 'fruit' ? 'Harvest Fruit' : s.item === 'hunt' ? 'Hunt Animal' : UNIQUE.indexOf(s.item) >= 0 || PRODS.indexOf(s.item) >= 0 ? 'Build ' + nm(s.item) : nm(s.item));
   const ICON = {
-    field: '🟩', forest: '🌲', mountain: '⛰️', water: '🌊', city: '🏠', crop: '🌾', ore: '💎', fruit: '🍒',
+    field: '🟩', forest: '🌲', mountain: '⛰️', water: '🌊', city: '🏠', crop: '🌾', ore: '💎', fruit: '🍒', animal: '🦌', hunt: '🏹',
     farm: '🌾', mine: '⛏️', lumber: '🪵', windmill: '🌬️', forge: '🔨', sawmill: '🪚', market: '🏪',
     destroy: '💥', clear: '🪓', burn: '🔥', plant: '🌱', other: '🏛️', space: '🌌', cloud: '☁️', monument: '🗽',
   };
-  const ICON_NAME = { ore: 'metal', plant: 'forest', destroy: null, clear: null, burn: null, other: null };
+  const ICON_NAME = { ore: 'metal', plant: 'forest', hunt: 'animal', destroy: null, clear: null, burn: null, other: null };
   const iconName = id => (id in ICON_NAME ? ICON_NAME[id] : id);
   const hasIcon = id => { const n = iconName(id); return !!(n && PP.icons && PP.icons.has && PP.icons.has(n)); };
   function iconHtml(id, size) {
@@ -903,16 +911,17 @@
   const ACT_COL = '#3ddc84'; // what the ✓ Built button acts on
   const cityCol = k => CITY_COL[(k >= 0 ? k : 0) % CITY_COL.length];
   const TER_B = ['field', 'forest', 'mountain', 'water', 'space', 'cloud', 'city'];
-  const RES_B = ['crop', 'ore', 'fruit'];
+  const RES_B = ['crop', 'ore', 'fruit', 'animal'];
   const BLD_B = ['farm', 'mine', 'lumber', 'windmill', 'forge', 'sawmill', 'market'];
   const BRUSH = TER_B.concat(RES_B, BLD_B, ['monument']);
-  const PAL_ORDER = ['field', 'sawmill', 'lumber', 'forest', 'windmill', 'farm', 'crop', 'fruit', 'forge', 'mine', 'ore', 'mountain', 'city', 'market', 'water', 'space', 'cloud', 'monument'];
-  const BRUSH_LABEL = { field: 'Empty', forest: 'Forest', mountain: 'Mountain', water: 'Water', space: 'Space', cloud: 'Cloud', monument: 'Monument', city: 'City', crop: 'Crop', ore: 'Metal', fruit: 'Fruit',
+  const PAL_ORDER = ['field', 'sawmill', 'lumber', 'forest', 'animal', 'windmill', 'farm', 'crop', 'fruit', 'forge', 'mine', 'ore', 'mountain', 'city', 'market', 'water', 'space', 'cloud', 'monument'];
+  const BRUSH_LABEL = { field: 'Empty', forest: 'Forest', mountain: 'Mountain', water: 'Water', space: 'Space', cloud: 'Cloud', monument: 'Monument', city: 'City', crop: 'Crop', ore: 'Metal', fruit: 'Fruit', animal: 'Animal',
     farm: 'Farm', mine: 'Mine', lumber: 'Lumber', windmill: 'Windmill', forge: 'Forge', sawmill: 'Sawmill', market: 'Market' };
-  const RES_TER = { crop: 'field', fruit: 'field', ore: 'mountain' };
+  const RES_TER = { crop: 'field', fruit: 'field', ore: 'mountain', animal: 'forest' };
   const OPT_LABEL = { clear: ['🪓', 'Clear Forest', '+1 ★'], burn: ['🔥', 'Burn Forest', '→ Crop'], grow: ['🌱', 'Grow Forest', 'Empty → Forest'],
     destroy: ['💥', 'Destroy buildings', 'move / replace'], produce: ['🏗️', 'New Farms, Mines, Lumber Huts', ''] };
   const TECH_OF_WS = { windmill: 'Construction', forge: 'Smithery', sawmill: 'Mathematics' }; // fallback when PP.TECH is missing
+  const RES_TECH = { fruit: 'Organization', hunt: 'Hunting' }; // fallback when PP.TECH is missing
 
   const ui = { step: 1, brush: 'forest', paint: null, alt: 0, sel: null, entered: false, borders: false, edit: null, onlyForest: false, growMenu: false, techMenu: false };
   const S = () => PP.state;
@@ -925,7 +934,7 @@
     if (!m.opts || typeof m.opts !== 'object') m.opts = {};
     // steps the player has marked as built (checklist only – the plan is not computed again): { 'c,r:item': 1 }
     if (!m.done || typeof m.done !== 'object' || Array.isArray(m.done)) m.done = {};
-    for (const k of OPT_KEYS.concat(WS_KEYS)) if (typeof m.opts[k] !== 'boolean') m.opts[k] = true;
+    for (const k of OPT_KEYS.concat(WS_KEYS, RES_KEYS)) if (typeof m.opts[k] !== 'boolean') m.opts[k] = true;
     if (!st.tiles || typeof st.tiles !== 'object' || Array.isArray(st.tiles)) st.tiles = {};
     if (!Array.isArray(st.cities)) st.cities = [];
     // region === false: v17 state. null: fresh state or a new screenshot (core resets it) → start over.
@@ -1371,9 +1380,9 @@
   // Which tech (that you don't have yet) brings your Markets the most? Every scenario is the best Market plan with your
   // techs plus that tech (and the techs it needs) – solved like the Border Growth check. Then the best order: the best
   // tech counts as bought and the others are checked again on top of it.
-  const MK_TECHS = ['trade', 'construction', 'mathematics', 'smithery', 'farming', 'forestry', 'mining', 'spiritualism'];
+  const MK_TECHS = ['trade', 'construction', 'mathematics', 'smithery', 'farming', 'forestry', 'mining', 'spiritualism', 'organization'];
   const TECH_PICK = ['riding', 'roads', 'trade', 'organization', 'farming', 'construction', 'hunting', 'forestry', 'mathematics', 'climbing', 'mining', 'smithery', 'archery', 'spiritualism', 'philosophy'];
-  const TECH_UNLOCKS = { trade: 'Markets', construction: 'Windmill, Burn Forest', mathematics: 'Sawmill', smithery: 'Forge', farming: 'Farm', forestry: 'Lumber Hut, Clear Forest', mining: 'Mine', spiritualism: 'Grow Forest' };
+  const TECH_UNLOCKS = { trade: 'Markets', construction: 'Windmill, Burn Forest', mathematics: 'Sawmill', smithery: 'Forge', farming: 'Farm', forestry: 'Lumber Hut, Clear Forest', mining: 'Mine', spiritualism: 'Grow Forest', organization: 'Harvest Fruit' };
   let tech = null;
   const techName = id => (PP.TECH && PP.TECH[id] ? PP.TECH[id].name : id);
   const ownedTechs = () => { const b = S().build || {}; return new Set(Array.isArray(b.owned) ? b.owned : []); };
@@ -1393,7 +1402,8 @@
   function techOpts(have) {
     const h = id => have.has(id), u = M().opts, o = Object.assign({}, u);
     const lim = { market: h('trade'), farm: h('farming'), mine: h('mining'), lumber: h('forestry'), clear: h('forestry'), burn: h('construction'),
-      destroy: h('construction'), grow: h('spiritualism'), windmill: h('construction'), sawmill: h('mathematics'), forge: h('smithery') };
+      destroy: h('construction'), grow: h('spiritualism'), windmill: h('construction'), sawmill: h('mathematics'), forge: h('smithery'),
+      fruit: h('organization'), hunt: h('hunting') };
     for (const k in lim) o[k] = u[k] !== false && lim[k];
     return o;
   }
@@ -2001,11 +2011,11 @@
         storeTile(c, r, { terrain: x.terrain, res: x.res.filter(q => q !== id), bld: (id === 'crop' && x.bld === 'farm') || (id === 'ore' && x.bld === 'mine') ? null : x.bld === 'other' ? x.other : x.bld });
         return;
       }
-      let res = x.terrain === ter ? x.res.filter(q => q !== 'crop' && q !== 'fruit' && q !== 'ore') : [];
+      let res = x.terrain === ter ? x.res.filter(q => q !== 'crop' && q !== 'fruit' && q !== 'ore' && q !== 'animal') : [];
       res = res.concat(id);
       // Market / workshops need a tile without resource; Farm needs Crop, Mine needs Metal
       let bld = x.terrain === ter ? x.bld : null;
-      if (bld && ((UNIQUE.indexOf(bld) >= 0 && id !== 'crop') || (bld === 'farm' && id !== 'crop'))) bld = null; // a Market / workshop may stand on Crop
+      if (bld && ((UNIQUE.indexOf(bld) >= 0 && id !== 'crop') || (bld === 'farm' && id !== 'crop') || (bld === 'lumber' && id === 'animal'))) bld = null; // a Market / workshop may stand on Crop
       storeTile(c, r, { terrain: ter, res, bld: bld === 'other' ? x.other : bld });
       return;
     }
@@ -2159,7 +2169,7 @@
 .mk .mk-steps button{flex:1;min-width:0;border:0;background:none;color:var(--muted,#9aa5c8);font-weight:650;font-size:13px;padding:6px 2px;border-radius:8px;line-height:1.1;min-height:36px;white-space:nowrap;touch-action:manipulation}
 .mk .mk-steps button.on{background:var(--panel2,#252e52);color:var(--text,#e8ecf8)}
 .mk .mk-steps button:disabled{opacity:.4}
-.mk .mk-pal{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:3px;margin:0 0 2px}
+.mk .mk-pal{display:grid;grid-template-columns:repeat(10,minmax(0,1fr));gap:3px;margin:0 0 2px}
 .mk .mk-pal button{border:1px solid var(--line,#33406e);background:var(--panel2,#252e52);color:var(--text,#e8ecf8);border-radius:8px;padding:2px 0 1px;font-size:clamp(7.5px,2.45vw,9.5px);letter-spacing:-.4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;min-width:0;min-height:44px;overflow:hidden;white-space:nowrap;touch-action:manipulation}
 .mk .mk-pal button span{font-size:18px;line-height:1.1;height:22px;display:flex;align-items:center}
 .mk .mk-pal button.on{border-color:var(--gold,#ffd166);background:rgba(255,209,102,.22);color:var(--gold,#ffd166);box-shadow:inset 0 0 0 1px var(--gold,#ffd166)}
@@ -2331,6 +2341,11 @@
         return `<button class="mk-opt ${m.opts[k] ? 'on' : ''}" data-opt="${k}" title="Uncheck if you don't have ${esc(tech)} – existing ${esc(nm(k))}s still count"><span class="bx">${m.opts[k] ? '✓' : ''}</span><span>${iconHtml(k, 16)} ${esc(nm(k))}<small>${esc(tech)}</small></span></button>`;
       }).join('') + '</div>';
       if (!WS_KEYS.some(k => m.opts[k])) h += '<p class="mk-note" style="margin-top:2px">No new workshops</p>';
+      h += '<h3>Resources you can use</h3><div class="mk-opts">' + RES_KEYS.map(k => {
+        const it = ITEM(k) || {}, tech = it.tech && PP.TECH && PP.TECH[it.tech] ? PP.TECH[it.tech].name : RES_TECH[k], lab = k === 'fruit' ? 'Harvest Fruit' : 'Hunt Animal';
+        const why = k === 'fruit' ? 'without it, Empty tiles with Fruit stay blocked' : 'without it, an Animal is lost when its forest is used (no Hunt first)';
+        return `<button class="mk-opt ${m.opts[k] ? 'on' : ''}" data-opt="${k}" title="Uncheck if you don't have ${esc(tech)} – ${esc(why)}"><span class="bx">${m.opts[k] ? '✓' : ''}</span><span>${iconHtml(k === 'hunt' ? 'animal' : k, 16)} ${lab}<small>${esc(tech)}</small></span></button>`;
+      }).join('') + '</div>';
       if (p) h += growthHtml(res);
       if (p) h += techHtml(res);
       const au = autoStats();
@@ -2386,7 +2401,7 @@
       if (x.bld && x.bld !== 'other') n[x.bld] = (n[x.bld] || 0) + 1;
       if (!x.stored) un++;
     }
-    const order = ['city', 'field', 'forest', 'mountain', 'water', 'crop', 'ore', 'fruit'].concat(BLD_B);
+    const order = ['city', 'field', 'forest', 'mountain', 'water', 'crop', 'ore', 'fruit', 'animal'].concat(BLD_B);
     return '<div class="mk-cnt">' + order.filter(k => n[k]).map(k => `<span title="${esc(nm(k))}">${iconHtml(k, 15)} ${n[k]}</span>`).join('') + (un ? `<span title="Not marked – counted as Empty">❔ ${un} unmarked</span>` : '') + '</div>';
   }
   // v32: the plan numbers its cities in board order, the map (colours, "City A/B/…") in the order they were selected →
@@ -2829,7 +2844,12 @@
     ctx.restore();
   }
   // v32: steps that remove a forest (cut down / burn) – the "only forests" view at the start of a turn
-  const forestSteps = p => (p ? p.steps.filter(s => s.item === 'clear' || s.item === 'burn') : []);
+  // (a Hunt on a forest that is cut down / burnt belongs to it: it has to happen first)
+  const forestSteps = p => {
+    if (!p) return [];
+    const cut = new Set(p.steps.filter(s => s.item === 'clear' || s.item === 'burn').map(s => key(s.c, s.r)));
+    return p.steps.filter(s => cut.has(key(s.c, s.r)) && (s.item === 'clear' || s.item === 'burn' || s.item === 'hunt'));
+  };
   function drawForest(ctx, D, p, u, big) {
     const rad = clamp(u * 0.15, 6.5, 11), byTile = new Map();
     forestSteps(p).forEach(s => { const k = key(s.c, s.r); if (!byTile.has(k)) byTile.set(k, []); byTile.get(k).push(s); });
@@ -2845,7 +2865,7 @@
     }
     later.forEach(f => f());
   }
-  const ACT_GLYPH = { destroy: '💥', fruit: '🍒', plant: '🌱', clear: '🪓', burn: '🔥' };
+  const ACT_GLYPH = { destroy: '💥', fruit: '🍒', hunt: '🏹', plant: '🌱', clear: '🪓', burn: '🔥' };
   // v29: a tapped Market of the plan → { set of 'c,r' (Market, its workshops, their producers), market }
   function focusOf(p) {
     if (!p || !ui.sel) return null;
